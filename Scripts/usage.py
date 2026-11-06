@@ -151,6 +151,19 @@ def fetch_codex():
         process.stdin.close()
         process.stdout.close()
 
+def claude_access_token(payload, keychain=False):
+    try:
+        credentials = json.loads(payload)
+    except (ValueError, UnicodeError):
+        if not keychain:
+            raise
+        # security -w emits hex when stored bytes include non-printable characters.
+        # Decode in memory; neither representation may be logged or cached.
+        credentials = json.loads(bytes.fromhex(payload.decode('ascii').strip()))
+    oauth = credentials.get('claudeAiOauth') if isinstance(credentials, dict) else None
+    token = oauth.get('accessToken') if isinstance(oauth, dict) else None
+    return token if isinstance(token, str) and token.strip() else None
+
 def claude_token():
     config = Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))).expanduser()
     services = ['Claude Code-credentials']
@@ -158,24 +171,29 @@ def claude_token():
     if 'CLAUDE_CONFIG_DIR' in os.environ:
         import hashlib
         services.insert(0, 'Claude Code-credentials-' + hashlib.sha256(str(config).encode()).hexdigest()[:8])
+    credential_error = None
     for service in services:
         result = subprocess.run(['/usr/bin/security', 'find-generic-password', '-s', service, '-w'],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
         if result.returncode == 0:
             try:
-                token = json.loads(result.stdout).get('claudeAiOauth', {}).get('accessToken')
-                if isinstance(token, str) and token:
+                token = claude_access_token(result.stdout, keychain=True)
+                if token:
                     return token
-            except (ValueError, AttributeError):
-                pass
+                credential_error = 'Claude credentials contain no OAuth token. Sign in to Claude Code with your Claude account.'
+            except (ValueError, UnicodeError):
+                credential_error = 'Claude credentials could not be decoded. Update Usage Widget or sign in again through Claude Code.'
     # Linux-style credentials are also supported, without logging their contents.
     try:
-        token = json.loads((config / '.credentials.json').read_bytes()).get('claudeAiOauth', {}).get('accessToken')
-        if isinstance(token, str) and token:
+        token = claude_access_token((config / '.credentials.json').read_bytes())
+        if token:
             return token
-    except (OSError, ValueError, AttributeError):
+        credential_error = 'Claude credentials contain no OAuth token. Sign in to Claude Code with your Claude account.'
+    except OSError:
         pass
-    raise UsageError('Claude Code sign-in unavailable. Open Claude Code and sign in.')
+    except (ValueError, UnicodeError):
+        credential_error = credential_error or 'Claude credentials could not be decoded. Update Usage Widget or sign in again through Claude Code.'
+    raise UsageError(credential_error or 'Claude Code credentials unavailable. Check Keychain access and Claude Code sign-in.')
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):

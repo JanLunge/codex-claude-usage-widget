@@ -35,6 +35,8 @@ For a stable installation, copy `Usage Widget.app` to `~/Applications`, launch i
 
 If Claude is unavailable, run `claude auth status`, then sign in through Claude Code. If Codex is unavailable, open Codex or run `codex login` with your ChatGPT account.
 
+If Claude Code reports logged in but an older widget says sign-in is unavailable, update to v0.1.1 or later. The reader accepts both plain JSON and hex-encoded JSON returned by macOS Keychain's `security` command. Quit Usage Widget before replacing the app, then reopen and refresh it. If it still fails, the app distinguishes unreadable credentials, undecodable credentials, and credentials without an OAuth token. API-key or third-party-provider sign-ins do not supply the Claude subscription OAuth token this widget needs.
+
 The build script uses ad hoc signing for local builds. macOS cannot authorize a provisioned App Group for an ad hoc signature, so the containing app publishes the usage-only cache to `~/Library/Containers/com.janlunge.usagewidget.widget/Data/Library/Application Support/UsageWidget/usage.json`. The widget reads its own sandbox Application Support directory. Its sandbox remains enabled, with no network or credential access. Old usage readings migrate from the earlier group cache when updating. For distribution, use an Apple developer identity; a registered App Group is the conventional sharing mechanism for fully signed builds. Build output is under `build/` and ignored by Git.
 
 ## Validation

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -9,6 +10,33 @@ usage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(usage)
 
 class UsageTests(unittest.TestCase):
+    def test_claude_keychain_plain_and_hex_json(self):
+        # Newlines and non-ASCII bytes cause security -w to output hex on macOS.
+        payload = json.dumps({'claudeAiOauth': {'accessToken': 'TEST_TOKEN'},
+                              'unrelated': 'caf\u00e9'}, ensure_ascii=False, indent=2).encode()
+        for encoded in [payload + b'\n', payload.hex().encode() + b'\n',
+                        payload.hex().upper().encode() + b'\n']:
+            with self.subTest(hex_encoded=encoded != payload + b'\n'):
+                result = subprocess.CompletedProcess([], 0, stdout=encoded)
+                with patch.object(usage.subprocess, 'run', return_value=result):
+                    self.assertEqual(usage.claude_token(), 'TEST_TOKEN')
+
+    def test_claude_bad_credentials_report_safe_errors_and_keep_file_fallback(self):
+        fallback = b'{"claudeAiOauth":{"accessToken":"FILE_TOKEN"}}'
+        for payload, expected in [(b'Bearer PRIVATE_SECRET', 'could not be decoded'),
+                                  (b'{"claudeAiOauth":null}', 'no OAuth token'),
+                                  (b'[]', 'no OAuth token'),
+                                  (b'{"claudeAiOauth":{"accessToken":"  "}}', 'no OAuth token')]:
+            with self.subTest(payload=payload):
+                result = subprocess.CompletedProcess([], 0, stdout=payload)
+                with patch.object(usage.subprocess, 'run', return_value=result):
+                    with patch.object(Path, 'read_bytes', return_value=fallback):
+                        self.assertEqual(usage.claude_token(), 'FILE_TOKEN')
+                    with patch.object(Path, 'read_bytes', side_effect=FileNotFoundError):
+                        status = usage.collect('Claude Code', usage.claude_token)
+                        self.assertIn(expected, status['error'])
+                        self.assertNotIn('PRIVATE_SECRET', json.dumps(status))
+
     def test_codex_prefers_codex_bucket(self):
         result = usage.parse_codex({'rateLimits': {'primary': {'usedPercent': 99}},
             'rateLimitsByLimitId': {'codex': {'primary': {
